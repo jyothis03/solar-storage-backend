@@ -4,6 +4,7 @@ from schemas import SolarStorage
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from models import Base, SolarStorageModel
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 DEMO_MODE = True #set to false when going live
@@ -18,6 +19,13 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 # If you need to create the table in a new database, uncomment the next line:
 # Base.metadata.create_all(bind=engine)
 
+app.add_middleware(
+    CORSMiddleware,
+       allow_origins=["*"],  # Update this with your allowed origins in production
+       allow_credentials=True,
+       allow_methods=["*"],
+       allow_headers=["*"],
+   )
 
 @app.get("/")
 def root():
