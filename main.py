@@ -1,10 +1,13 @@
 from fastapi import FastAPI, Query
+from contextlib import asynccontextmanager
 from random import uniform
 from schemas import SolarStorage
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from models import Base, SolarStorageModel
 from fastapi.middleware.cors import CORSMiddleware
+from apscheduler.schedulers.background import BackgroundScheduler
+
 
 app = FastAPI()
 DEMO_MODE = True #set to false when going live
@@ -15,6 +18,22 @@ DEMO_MODE = True #set to false when going live
 DATABASE_URL = "sqlite:///./solar_storage.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+scheduler=BackgroundScheduler()
+
+def periodic_task():
+
+    pass
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    
+    scheduler.add_job(periodic_task, 'interval', minutes=10)
+    scheduler.start()
+    yield
+    scheduler.shutdown()
+
+app = FastAPI(lifespan=lifespan)
 
 # If you need to create the table in a new database, uncomment the next line:
 # Base.metadata.create_all(bind=engine)
