@@ -70,7 +70,7 @@ def simulate_storage(id: int = Query(default=None,
     
     return get_solar_storage()
 
-@app.get("/ping", methods=["GET", "HEAD"]) # to keep the server running
+@app.api_route("/ping", methods=["GET", "HEAD"]) # to keep the server running
 def ping():
     return {"status": "alive"}
 
