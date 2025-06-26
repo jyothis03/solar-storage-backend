@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 app = FastAPI()
 DEMO_MODE = True #set to false when going live
 
-DATABASE_URL = "postgresql://jyothis:jCJCnWNjuZLglDpts98mP4AUzHhAiAjF@dpg-d1declm3jp1c73f10470-a/solar_storage"
+DATABASE_URL = "postgresql://jyothis:jCJCnWNjuZLglDpts98mP4AUzHhAiAjF@dpg-d1declm3jp1c73f10470-a.singapore-postgres.render.com/solar_storage"
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -26,7 +26,7 @@ def get_db():
 
 app.add_middleware(
     CORSMiddleware,
-       allow_origins=["*"],  # Update this with your allowed origins in production
+       allow_origins=["*"],  
        allow_credentials=True,
        allow_methods=["*"],
        allow_headers=["*"],
@@ -88,11 +88,27 @@ def simulate_storage(id: int = Query(default=None,
 
     return data
 
+@app.get("/charts")
+def last10records(
+    db:Session= Depends(get_db)
+):
+    records=(db.query(SolarStorageModel)
+             .order_by(SolarStorageModel.timestamp.desc())
+             .limit(10)
+             .all()
+             )
+    
+    return [
+        {
+            "timestamp": r.timestamp.isoformat(),
+            "panel_output_kw": r.panel_output_kw,
+            "storage_kw": r.storage_kw,
+            "charge_percent": r.charge_percent
+        }
+        for r in reversed(records)  
+    ]
 
-@app.api_route("/ping", methods=["GET", "HEAD"]) # to keep the server running
+@app.api_route("/ping", methods=["GET", "HEAD"]) 
 def ping():
     return {"status": "alive"}
 
-
-#Ensure your SolarStorageModel in models.py matches your actual table schema.
-#Read all the comments in case of going live
