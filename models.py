@@ -1,5 +1,6 @@
-from sqlalchemy import Column, Float, Integer
+from sqlalchemy import Column, Float, Integer, DateTime
 from sqlalchemy.ext.declarative import declarative_base
+from datetime import datetime,timezone
 
 Base = declarative_base()
 
@@ -9,7 +10,7 @@ class SolarStorageModel(Base):
     panel_output_kw = Column(Float)
     storage_kw = Column(Float)
     charge_percent = Column(Float)
-
+    timestamp = Column(DateTime, default=lambda:datetime.now(timezone.utc))
 
 
     # If your table has more columns, add them here to match your actual DB structure

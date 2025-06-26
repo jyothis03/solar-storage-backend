@@ -1,25 +1,28 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Depends
 from random import uniform
 from schemas import SolarStorage
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from models import Base, SolarStorageModel
 from fastapi.middleware.cors import CORSMiddleware
-
+from datetime import datetime,timezone
+from sqlalchemy.orm import Session
 
 app = FastAPI()
 DEMO_MODE = True #set to false when going live
 
-
-# 1. Change DATABASE_URL to point to your actual database.
-
-DATABASE_URL = "sqlite:///./solar_storage.db"
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+DATABASE_URL = "postgresql://jyothis:jCJCnWNjuZLglDpts98mP4AUzHhAiAjF@dpg-d1declm3jp1c73f10470-a/solar_storage"
+engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+Base.metadata.create_all(bind=engine)
 
-# If you need to create the table in a new database, uncomment the next line:
-# Base.metadata.create_all(bind=engine)
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,7 +36,7 @@ app.add_middleware(
 def root():
     return{"message":"welcome to chainfly"}
 
-def get_solar_storage(specific_id: int = None):
+def get_solar_storage(specific_id: int = None, db : Session = None):
     if DEMO_MODE:
         panel_output_kw = round(uniform(2.0, 6.0), 2)
         storage_kw = round(uniform(1.0, 5.0), 2)
@@ -41,21 +44,23 @@ def get_solar_storage(specific_id: int = None):
         return SolarStorage(
             panel_output_kw=panel_output_kw,
             storage_kw=storage_kw,
-            charge_percent=charge_percent
+            charge_percent=charge_percent,
+            timestamp=datetime.now(timezone.utc)
         )
     else:
-        db = SessionLocal()
         if specific_id is not None:
             result = db.query(SolarStorageModel).filter(SolarStorageModel.id == specific_id).first()
         else:
             result = db.query(SolarStorageModel).order_by(SolarStorageModel.id.desc()).first()
-        db.close()
+        
 
         if result:
             return SolarStorage(
                 panel_output_kw=result.panel_output_kw,
                 storage_kw=result.storage_kw,
-                charge_percent=result.charge_percent
+                charge_percent=result.charge_percent,
+                timestamp=datetime.now(timezone.utc)
+        
         )
         else:
             return SolarStorage(
@@ -66,9 +71,23 @@ def get_solar_storage(specific_id: int = None):
         
 @app.get("/simulate",response_model=SolarStorage)
 def simulate_storage(id: int = Query(default=None,
-     description="Fetch by specific id if provided")):
+     description="Fetch by specific id if provided"),
+     db: Session = Depends(get_db)):
     
-    return get_solar_storage()
+    data=get_solar_storage(specific_id=id, db=db)
+    if DEMO_MODE:
+        
+        record=SolarStorageModel(
+            panel_output_kw=data.panel_output_kw,
+            storage_kw=data.storage_kw,
+            charge_percent=data.charge_percent,
+            timestamp=datetime.now(timezone.utc)
+        )
+        db.add(record)
+        db.commit()
+
+    return data
+
 
 @app.api_route("/ping", methods=["GET", "HEAD"]) # to keep the server running
 def ping():
