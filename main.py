@@ -10,7 +10,9 @@ from sqlalchemy.orm import Session
 from geopy.geocoders import Nominatim
 import random
 import requests
+import logging
 
+logger = logging.getLogger("uvicorn.error")
 app = FastAPI()
 DEMO_MODE = True #set to false when going live
 
@@ -45,7 +47,7 @@ def get_lat_lon(location_name):
     if loc:
         return loc.latitude, loc.longitude
     else:
-        print(f"[WARN] Could not geocode location '{location_name}'. Using fallback coordinates (10.0, 76.0).")
+        logger.warning(f"Could not geocode location '{location_name}'. Using fallback coordinates (10.0, 76.0).")
         return 10.0, 76.0
 
 def fetch_irradiance(lat,lon):
@@ -57,8 +59,9 @@ def fetch_irradiance(lat,lon):
         avg = sum(values) / len(values)
         return avg / 5.0
     except Exception as e:
-        print(f"[WARN] NASA API failed for coordinates ({lat}, {lon}). Error: {e}. Using fallback factor 1.0.")
+        logger.warning(f"NASA API failed for ({lat}, {lon}): {e}. Using fallback factor.")
         return 1.0
+
 
 def scenario_factor(scenario):
     if scenario == "Clear":
@@ -124,6 +127,8 @@ def simulate_storage(
     loss_factor: float = Query(default=10.0, description="System loss percentage"),
     scenario: str = Query(default="Clear", description="Scenario: Clear, Cloudy, Monsoon"),
     noise: bool = Query(default=False, description="Add random noise toggle"),
+    efficiency: float = Query(default=90.0, description="Round-trip efficiency (%)"),
+    dod: float = Query(default=80.0, description="Depth of Discharge (%)"),
     db: Session = Depends(get_db)
 ):
     if DEMO_MODE:
@@ -132,10 +137,26 @@ def simulate_storage(
 
         base_battery = 5.0
         scaled_storage_kw = data.storage_kw * (battery_size / base_battery)
-        new_charge_percent = round((scaled_storage_kw / battery_size) * 100, 1)
+
+        # Round-trip efficiency
+        effective_storage_kw = scaled_storage_kw * (efficiency / 100)
+
+        # Depth of Discharge
+        usable_capacity_kw = effective_storage_kw * (dod / 100)
+
+        # Capacity fade
+        capacity_fade_factor = 0.95
+        usable_capacity_kw *= capacity_fade_factor
+
+        # Temp derating
+        temp_derate_factor = 0.98
+        usable_capacity_kw *= temp_derate_factor
+
+        # New charge percent
+        new_charge_percent = round((usable_capacity_kw / battery_size) * 100, 1)
 
         data.panel_output_kw = round(adjusted_panel_output, 2)
-        data.storage_kw = round(scaled_storage_kw, 2)
+        data.storage_kw = round(usable_capacity_kw, 2)
         data.charge_percent = new_charge_percent
 
         record = SolarStorageModel(
@@ -149,7 +170,7 @@ def simulate_storage(
 
         return data
     else:
-        data = get_solar_storage(db=db,specific_id=id)
+        data = get_solar_storage(db=db, specific_id=id)
         return data
 
 
