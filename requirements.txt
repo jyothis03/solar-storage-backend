@@ -6,3 +6,5 @@ sqlalchemy
 apscheduler
 psycopg2-binary
 python-dotenv
+geopy
+requests

@@ -7,6 +7,9 @@ from models import Base, SolarStorageModel
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime,timezone
 from sqlalchemy.orm import Session
+from geopy.geocoders import Nominatim
+import random
+import requests
 
 app = FastAPI()
 DEMO_MODE = True #set to false when going live
@@ -36,13 +39,57 @@ app.add_middleware(
 def root():
     return{"message":"welcome to chainfly"}
 
-def get_solar_storage(specific_id: int = None, db : Session = None):
+def get_lat_lon(location_name):
+    geolocator = Nominatim(user_agent="solar_sim")
+    loc = geolocator.geocode(location_name)
+    if loc:
+        return loc.latitude, loc.longitude
+    else:
+        print(f"[WARN] Could not geocode location '{location_name}'. Using fallback coordinates (10.0, 76.0).")
+        return 10.0, 76.0
+
+def fetch_irradiance(lat,lon):
+    url = f"https://power.larc.nasa.gov/api/temporal/daily/point?parameters=ALLSKY_SFC_SW_DWN&community=RE&longitude={lon}&latitude={lat}&format=JSON&start=2022&end=2022"
+    res=requests.get(url)
+    data=res.json()
+    try:
+        values = list(data['properties']['parameter']['ALLSKY_SFC_SW_DWN'].values())
+        avg = sum(values) / len(values)
+        return avg / 5.0
+    except Exception as e:
+        print(f"[WARN] NASA API failed for coordinates ({lat}, {lon}). Error: {e}. Using fallback factor 1.0.")
+        return 1.0
+
+def scenario_factor(scenario):
+    if scenario == "Clear":
+        return 1.0
+    elif scenario == "Cloudy":
+        return 0.6
+    elif scenario == "Monsoon":
+        return 0.4
+    else:
+        return 1.0
+    
+def add_noise(value, enabled):
+    if enabled:
+        noise_factor = random.uniform(0.9, 1.1)
+        return value * noise_factor
+    return value
+
+def get_solar_storage(specific_id: int = None,location="Default", scenario="Clear", noise=False, db : Session = None):
     if DEMO_MODE:
-        panel_output_kw = round(uniform(2.0, 6.0), 2)
+        panel_output_kw = 5.0
         storage_kw = round(uniform(1.0, 5.0), 2)
         charge_percent = round((storage_kw / 5.0) * 100, 1)
+
+        lat,lon = get_lat_lon(location)
+        irradiance_factor = fetch_irradiance(lat,lon)
+        scen_factor = scenario_factor(scenario)
+        adjusted_output = panel_output_kw * irradiance_factor * scen_factor
+        adjusted_output = round(add_noise(adjusted_output, noise),2)
+
         return SolarStorage(
-            panel_output_kw=panel_output_kw,
+            panel_output_kw=adjusted_output,
             storage_kw=storage_kw,
             charge_percent=charge_percent,
             timestamp=datetime.now(timezone.utc)
@@ -75,27 +122,16 @@ def simulate_storage(
     location: str = Query(default="Default", description="Location to simulate irradiance"),
     battery_size: float = Query(default=5.0, description="Battery size in kWh"),
     loss_factor: float = Query(default=10.0, description="System loss percentage"),
+    scenario: str = Query(default="Clear", description="Scenario: Clear, Cloudy, Monsoon"),
+    noise: bool = Query(default=False, description="Add random noise toggle"),
     db: Session = Depends(get_db)
 ):
-    data = get_solar_storage(specific_id=id, db=db)
-
     if DEMO_MODE:
-        # First adjust panel output for system loss
+        data = get_solar_storage(location=location, scenario=scenario, noise=noise, db=db)
         adjusted_panel_output = data.panel_output_kw * ((100 - loss_factor) / 100)
-
-        # Add your location adjustment **right here**
-        if location.lower() == "kerala":
-            irradiance_factor = 1.05  # example: slightly higher
-        elif location.lower() == "delhi":
-            irradiance_factor = 0.95  # example: slightly lower
-        else:
-            irradiance_factor = 1.0
-
-        adjusted_panel_output *= irradiance_factor
 
         base_battery = 5.0
         scaled_storage_kw = data.storage_kw * (battery_size / base_battery)
-
         new_charge_percent = round((scaled_storage_kw / battery_size) * 100, 1)
 
         data.panel_output_kw = round(adjusted_panel_output, 2)
@@ -106,12 +142,15 @@ def simulate_storage(
             panel_output_kw=data.panel_output_kw,
             storage_kw=data.storage_kw,
             charge_percent=data.charge_percent,
-            timestamp=datetime.now(timezone.utc)
+            timestamp=data.timestamp
         )
         db.add(record)
         db.commit()
 
-    return data
+        return data
+    else:
+        data = get_solar_storage(db=db,specific_id=id)
+        return data
 
 
 @app.get("/charts")
